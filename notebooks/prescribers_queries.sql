@@ -54,6 +54,7 @@
 -- 	, population.population
 -- 	, SUM(prescription.total_claim_count) AS total_opioids
 -- 	, (SUM(prescription.total_claim_count)/total_claims.total_claims)*100 AS opioid_pct
+-- 	, RANK() OVER(ORDER BY SUM(prescription.total_claim_count) DESC) AS opioids_rank
 -- FROM fips_county
 -- 	INNER JOIN population
 -- 		USING (fipscounty)
@@ -72,7 +73,7 @@
 -- GROUP BY fips_county.county
 -- 	, population.population
 -- 	, total_claims.total_claims
--- ORDER BY total_opioids DESC
+-- ORDER BY opioid_pct DESC
 
 -- --Question 2: Who are the top opioid prescibers for the state of Tennessee?
 -- SELECT prescriber.npi
@@ -107,7 +108,7 @@
 -- ORDER BY overdose_fixed.year
 
 --Question 4: Is there an association between rates of opioid prescriptions and overdose deaths by county?
--- WITH overdose_fixed AS (
+-- WITH overdose_fixed AS (			-- Overdose deaths by county, to be merged with other dataframes in Python
 -- 	SELECT overdose_deaths
 -- 		, year
 -- 		, fipscounty::varchar
@@ -124,84 +125,109 @@
 -- 	, fips_county.fipscounty
 
 -- Question 5: Is there any association between a particular type of opioid and number of overdose deaths?
-WITH max_zips AS (
-	SELECT DISTINCT zip
-		, MAX(tot_ratio) as max_ratio
-	FROM zip_fips
-	GROUP BY zip
-)
-, sort_fips AS (	
-	SELECT zip_fips.zip
-		, zip_fips.fipscounty
-		, zip_fips.tot_ratio
-	FROM zip_fips
-		INNER JOIN max_zips
-			ON zip_fips.zip = max_zips.zip
-			AND zip_fips.tot_ratio = max_zips.max_ratio
-)
-, drug_flag AS (
-	SELECT drug_name
-		, generic_name
-		, CASE WHEN generic_name ILIKE '%FENTANYL%' THEN 'Y'
-			ELSE NULL
-			END AS fent_flag
-		, CASE WHEN generic_name ILIKE '%HYDROCODONE%' THEN 'Y'
-			ELSE NULL
-			END AS hydroc_flag
-		, CASE WHEN generic_name ILIKE '%CODEINE%' THEN 'Y'
-			ELSE NULL
-			END AS codeine_flag
-		, CASE WHEN generic_name ILIKE '%MORPHINE%' THEN 'Y'
-			ELSE NULL
-			END AS morph_flag
-		, CASE WHEN generic_name ILIKE '%METHADONE%' THEN 'Y'
-			ELSE NULL
-			END AS methadone_flag
-		, CASE WHEN generic_name ILIKE '%OXYCODONE%' THEN 'Y'
-			ELSE NULL
-			END AS oxy_flag
-		, CASE WHEN generic_name ILIKE '%HYDROMORPHONE%' THEN 'Y'
-			ELSE NULL
-			END AS hydrom_flag
-		, CASE WHEN generic_name ILIKE '%TRAMADOL%' THEN 'Y'
-			ELSE NULL
-			END AS tram_flag
-	FROM drug
-	WHERE opioid_drug_flag ILIKE 'Y'
-)
-SELECT fips_county.county
-	, COUNT(drug_flag.fent_flag) AS fent_count
-	, COUNT(drug_flag.hydroc_flag) AS hydroc_count
-	, COUNT(drug_flag.codeine_flag) AS codeine_count
-	, COUNT(drug_flag.morph_flag) AS morph_count
-	, COUNT(drug_flag.methadone_flag) AS methadone_count
-	, COUNT(drug_flag.oxy_flag) AS oxy_count
-	, COUNT(drug_flag.hydrom_flag) AS hydrom_count
-	, COUNT(drug_flag.tram_flag) AS tram_count
-FROM fips_county
-	INNER JOIN population
-		USING (fipscounty)
-	INNER JOIN sort_fips
-		USING (fipscounty)
-	INNER JOIN prescriber
-		ON sort_fips.zip = prescriber.nppes_provider_zip5
-	INNER JOIN prescription
-		USING (npi)
-	INNER JOIN drug
-		USING (drug_name)
-	INNER JOIN drug_flag
-		USING(drug_name , generic_name)
-WHERE drug.opioid_drug_flag ILIKE 'Y'
-	AND fips_county.state ILIKE 'TN'
-GROUP BY fips_county.county
-
--- SELECT *, ROW_NUMBER() OVER(PARTITION BY generic_name ORDER BY generic_name) opiod_Type_count
--- FROM drug WHERE opioid_drug_flag = 'Y'
-
-SELECT * from prescription ORDER BY npi,drug_name
+-- WITH max_zips AS (				-- Grouping opioids by primary active ingredient and county prescribed
+-- 	SELECT DISTINCT zip
+-- 		, MAX(tot_ratio) as max_ratio
+-- 	FROM zip_fips
+-- 	GROUP BY zip
+-- )
+-- , sort_fips AS (	
+-- 	SELECT zip_fips.zip
+-- 		, zip_fips.fipscounty
+-- 		, zip_fips.tot_ratio
+-- 	FROM zip_fips
+-- 		INNER JOIN max_zips
+-- 			ON zip_fips.zip = max_zips.zip
+-- 			AND zip_fips.tot_ratio = max_zips.max_ratio
+-- )
+-- , overdose_fixed AS (
+-- 	SELECT overdose_deaths
+-- 		, year
+-- 		, fipscounty::varchar
+-- 	FROM overdose_deaths
+-- )
+-- , drug_flag AS (
+-- 	SELECT drug_name
+-- 		, generic_name
+-- 		, CASE WHEN generic_name ILIKE '%FENTANYL%' THEN 'FENTANYL'
+-- 			WHEN generic_name ILIKE '%HYDROCODONE%' THEN 'HYDROCODONE'
+-- 			WHEN generic_name ILIKE '%CODEINE%' THEN 'CODEINE'
+-- 			WHEN generic_name ILIKE '%MORPHINE%' THEN 'MORPHINE'
+-- 			WHEN generic_name ILIKE '%METHADONE%' THEN 'METHADONE'
+-- 			WHEN generic_name ILIKE '%OXYCODONE%' THEN 'OXYCODONE'
+-- 			WHEN generic_name ILIKE '%HYDROMORPHONE%' THEN 'HYDROMORPHONE'
+-- 			WHEN generic_name ILIKE '%TRAMADOL%' THEN 'TRAMADOL'
+-- 			WHEN generic_name ILIKE '%BUPRENORPHINE%' THEN 'BUPRENORPHINE'
+-- 			WHEN generic_name ILIKE '%OPIUM%' THEN 'OPIUM'
+-- 			WHEN generic_name ILIKE '%BUTORPHANOL%' THEN 'BUTORPHANOL'
+-- 			WHEN generic_name ILIKE '%TAPENTADOL%' THEN 'TAPENTADOL'
+-- 			WHEN generic_name ILIKE '%OXYMORPHONE%' THEN 'OXYMORPHONE'
+-- 			END AS opioid_type
+-- 	FROM drug
+-- 	WHERE opioid_drug_flag ILIKE 'Y'
+-- )
+-- SELECT fips_county.county
+-- 	,	drug_flag.opioid_type
+-- 	,	SUM(prescription.total_claim_count) AS total_prescribed
+-- FROM fips_county
+-- 	INNER JOIN population
+-- 		USING (fipscounty)
+-- 	INNER JOIN sort_fips
+-- 		USING (fipscounty)
+-- 	INNER JOIN prescriber
+-- 		ON sort_fips.zip = prescriber.nppes_provider_zip5
+-- 	INNER JOIN prescription
+-- 		USING (npi)
+-- 	INNER JOIN drug
+-- 		USING (drug_name)
+-- 	INNER JOIN drug_flag
+-- 		USING(drug_name , generic_name)
+-- WHERE fips_county.state ILIKE 'TN'
+-- GROUP BY fips_county.county, drug_flag.opioid_type
+-- ORDER BY fips_county.county, total_prescribed DESC
 
 
-
+-- WITH max_zips AS (				-- Grouping opioids by generic name and county prescribed
+-- 	SELECT DISTINCT zip
+-- 		, MAX(tot_ratio) as max_ratio
+-- 	FROM zip_fips
+-- 	GROUP BY zip
+-- )
+-- , sort_fips AS (	
+-- 	SELECT zip_fips.zip
+-- 		, zip_fips.fipscounty
+-- 		, zip_fips.tot_ratio
+-- 	FROM zip_fips
+-- 		INNER JOIN max_zips
+-- 			ON zip_fips.zip = max_zips.zip
+-- 			AND zip_fips.tot_ratio = max_zips.max_ratio
+-- )
+-- , overdose_fixed AS (
+-- 	SELECT overdose_deaths
+-- 		, year
+-- 		, fipscounty::varchar
+-- 	FROM overdose_deaths
+-- )
+-- SELECT fips_county.county
+-- 	,	drug.drug_name
+-- 	, SUM(prescription.total_claim_count) as total_prescribed
+-- FROM fips_county
+-- 	INNER JOIN population
+-- 		USING (fipscounty)
+-- 	INNER JOIN sort_fips
+-- 		USING (fipscounty)
+-- 	INNER JOIN prescriber
+-- 		ON sort_fips.zip = prescriber.nppes_provider_zip5
+-- 	INNER JOIN prescription
+-- 		USING (npi)
+-- 	INNER JOIN drug
+-- 		USING (drug_name)
+-- WHERE fips_county.state ILIKE '%TN%'
+-- 	AND drug.opioid_drug_flag ILIKE 'Y'
+-- GROUP BY fips_county.county
+-- 	, drug.drug_name
+-- ORDER BY fips_county.county
+-- 	, total_prescribed DESC
 
 
 
